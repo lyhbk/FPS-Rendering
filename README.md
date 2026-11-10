@@ -1,110 +1,221 @@
-# FPS-Rendering
+# GunWar
 
-GunWar — URP 第一人称射击与自定义贴花渲染 Demo
-基于 团结引擎（Tuanjie 1.10.3 / Editor 2022.3.62t15）+ Universal Render Pipeline 14.2.0 的渲染向个人 Demo。 以"一枪打出去之后画面上留下什么"为主线，覆盖 自定义 Renderer Feature 贴花系统、命中特效对象池、赛博朋克风格化 Shader 与编辑器工具链。
+项目简介：基于团结引擎（Tuanjie 1.10.3，对应 Unity 2022.3.62t15）与 URP 14.2.0-t1 的第一人称射击 Demo，场景是一条室内赛博朋克窄街。玩家持 AK 移动、跳跃、开火，命中面会留下带碳化与余烬两段效果的枪击贴花。
 
-说明：本项目为个人渲染技术验证 Demo，重点在渲染管线扩展与画面表现，关卡内容为测试场景。
+代码集中在 `Assets/Code`（运行时 14 个脚本）与 `Assets/Editor`（4 个编辑器脚本），渲染相关资产在 `Assets/MatShader`（16 个 Shader + 1 个公共 HLSL）与 `Assets/URP`（管线、Renderer、Volume Profile）。
 
-一、项目亮点
-亮点	        说明
-自研贴花系统	不使用 URP 内置 Decal，手写 ScriptableRendererFeature + StructuredBuffer + DrawProcedural，N 个贴花恒为 1~2 次 DrawCall
-程序化烧灼表现	深度重建世界坐标 + 盒体裁剪 + FBM 噪声，一次命中同时给出"碳化（乘法）"与"余烬（加法）"两个 Pass
-面向性能的分级降级	按贴花数量与屏幕预算三档自动降档：旧贴花淘汰、噪声层数 4→2→1、跳过余烬 Pass
-完整的编辑器工具链	霓虹烘焙点光、一键赛博朋克调色、烧灼贴图生成等 4 个 Editor 工具，全部菜单化
-对象池贯穿全链路	枪口火花、命中特效、贴花统一走 prefab 分池，无运行时 Instantiate 抖动
-二、运行环境
-项	版本
-引擎	团结引擎 Tuanjie 1.10.3（Editor 版本号 2022.3.62t15）
-渲染管线	Universal RP 14.2.0-t1
-依赖	TextMeshPro 3.0.9、Timeline 1.8.9-t1、Visual Scripting 1.9.4
-平台	Windows（Standalone）
-使用团结引擎打开；若用原版 Unity 2022.3 打开，需注意团结引擎内置包（如 TuanjieGI 相关 Shader）的兼容性告警。
+## 一、项目概览
 
-三、快速开始
-克隆仓库：
-bash
-git clone https://github.com/lyhbk/FPS-Rendering.git
-仓库名与本地工程名不同：克隆后得到的是 FPS-Rendering 目录，工程实际名称为 GunWar，二者指同一个工程，直接打开该目录即可。
-用团结引擎 1.10.3 打开工程根目录（首次导入会重建 Library/，耗时较长属正常）。
-打开场景 Assets/Scenes/Main.unity，点击 Play。
-若画面霓虹下方没有光池：执行菜单 Tools → 赛博朋克光照 → ① 检查烘焙前置条件 → ② 为霓虹生成烘焙点光，再烘焙光照贴图（这些灯是 Baked 模式，不烘焙不生效）。
-若想调整整体色调：菜单 Tools → 赛博朋克调色 → 应用第一档(后处理全套)，可用 还原(关闭第一档) 回退。
-四、操作说明
-输入	行为
-W / A / S / D	移动（CharacterController，速度 20 m/s）
-鼠标移动	视角旋转，上下视角限制在 ±30°
-Space	跳跃（跳跃高度 1.5 m，重力 -9.81）
-鼠标左键	开火（射速上限 5 发/秒，射线检测距离 200 m）
-开火后会在命中点生成特效与烧灼贴花，贴花默认存活 8 秒，最后 2 秒淡出。
+| 项目 | 说明 |
+| --- | --- |
+| 引擎 | 团结引擎 Tuanjie 1.10.3（Editor 2022.3.62t15） |
+| 语言 | C#；运行时脚本 14 个、编辑器脚本 4 个，共 18 个 .cs |
+| 核心依赖 | URP 14.2.0-t1（Forward + Volume 后处理）、uGUI 1.0.0、TextMeshPro 3.0.9、Timeline 1.8.9-t1；未引入第三方包 |
+| 场景 | `Assets/Scenes/Main.unity` 为主场景；`Load.unity` 只有 Canvas/Button/Text 的加载页；`TEST.unity` 为材质与光照测试场景 |
+| 数据或资源 | 37 个 .mat、87 张贴图、16 个 Shader + 1 个 HLSL、9 个 .fbx 与 1 个 .obj 模型、4 个预制体；主场景含 241 个 Light（119 点光 / 120 聚光 / 2 平行光，其中 117 个为 Baked） |
+| 交付形态 | 本地工程，用团结引擎打开 `Assets/Scenes/Main.unity` 直接 Play；没有发布包与可执行文件 |
 
-五、功能一览
-第一人称控制：CharacterController 驱动，鼠标视角 + 身体朝向系数可调，瞄准红点沿命中面法线抬升 0.02 m 避免 Z-Fighting。
-射线命中判定：使用 Physics.RaycastAll 取射线路径全部命中并逐个有效性校验，避免 Physics.Raycast 只返回首个命中导致的薄物体/密集物体误判。
-枪口火花 / 命中特效：粒子系统按命中面法线朝外对齐，零向量法线有兜底，避免 LookRotation viewing vector is zero 中断特效链。
-自定义贴花：命中留痕，支持盒体尺寸、存活时长、淡出时长、年龄驱动的余烬冷却。
-风格化 Shader：霓虹网格地面、建筑窗格、自发光招牌、灯笼、火焰、枪械自定义 PBR 等 16 个 Shader。
-后处理：ACES Tonemapping、Bloom、Color Adjustments、色差、暗角、颗粒。
-编辑器工具：霓虹烘焙点光、一键调色、烧灼贴图生成、Bloom 参数修复。
-六、技术实现
-6.1 自定义贴花系统
-贴花相关的四个核心文件：
+```
+Assets
+├── Code                                        # 运行时脚本 14 个
+│   ├── PlayerControl.cs                        # 第一人称移动/视角/跳跃，开火链路：射速闸门 → RaycastAll → 特效 → 贴花；准星红点吸附
+│   ├── Player.cs                               # 玩家中间层单例：存放视角角度、位置、地面状态，向 UI 转发通知
+│   ├── PlayerQuestUI.cs                        # UI 契约接口：ShowHint / HideHint / UpdateHealth
+│   ├── UIFun.cs                                # 实现 PlayerQuestUI，在 Canvas 上显示提示文本
+│   ├── BulletBase.cs                           # 命中特效基类：记录来源预制体，SafeLookRotation 摆位，播粒子并生成贴花
+│   ├── FireBullet.cs                           # 命中火花实例：活跃数达 MaxActive=8 时驱逐最旧并归还池
+│   ├── MuzzleEffect.cs                         # 枪口火光：粒子 + Light 强度二次衰减，flashTime=0.1s 后抛 Finished 事件
+│   ├── GameObjectPool.cs                       # 静态对象池表（按来源预制体的 instanceID 分池），Get / Release / Clear
+│   ├── DecalProjector.cs                       # 单个贴花数据：OnEnable 注册、Tick 计时，lifeTime=8s、fadeTime=2s
+│   ├── DecalManager.cs                         # 每帧 Tick 活跃贴花，到期注销并按其来源预制体归还池
+│   ├── DecalRenderFeature.cs                   # URP RendererFeature：实例数据打包进 ComputeBuffer，一次 DrawProcedural 画完
+│   ├── DecalDiag.cs                            # 贴花不可见时的编号化诊断（P1~P5 现象 / R1~R5 对策）
+│   ├── EmissionFlickerControl.cs               # Sharp 材质自发光闪烁的全局 float 开关
+│   └── Test.cs                                 # URP RendererFeature 模板残留，未挂到任何 Renderer
+├── Editor                                      # 编辑器脚本 4 个
+│   ├── CyberpunkGrade.cs                       # 一键给 Global Volume 挂全套后处理 / 还原第一档
+│   ├── NeonBakeLights.cs                       # 为霓虹模型批量生成 Baked 点光、检查烘焙前置、清理生成物
+│   ├── FixBloomParams.cs                       # 把 Bloom 的 maxIterations 改成 3、clamp 改成 20
+│   └── BurnDecalTextureGenerator.cs            # 生成 512×512 灼烧贴图并尝试赋给 BurnDecal.mat
+├── MatShader                                   # Shader 16 个 + 公共 HLSL 1 个
+│   ├── BurnDecal.shader                        # 贴花绘制：CHAR（碳化）与 EMBER（余烬）两个 Pass
+│   ├── BurnDecalCommon.hlsl                    # DecalData 结构、屏幕 UV、深度重建、盒体裁剪的公共实现
+│   ├── DecalDepthProxy.shader                  # 早期"深度代理盒"方案，已被平面求交回退取代，未启用
+│   ├── Cyber.shader / CyberWindow.shader / CyberNightSky.shader   # 街景主材质、霓虹窗、夜空穹顶
+│   ├── Plane.shader / RandomLit.shader / Rendering.shader         # 地面网格、随机亮灯、调色用材质
+│   ├── Sharp.shader                            # 霓虹边缘自发光，含 _GLOBAL_EMISSION_FLICKER 闪烁分支
+│   ├── Fire.shader / MuzzleFlash.shader        # 命中火花、枪口火光
+│   ├── Lantern.shader / LanternCutout.shader   # 纸灯笼与镂空版
+│   └── DecoEmissive.shader / Target.shader / UnlitHash.shader     # 装饰自发光、红点准星、无光照网格
+├── Material                                    # 材质 37 个、贴图 87 张
+│   ├── AK/                                     # AK 的 10 个部件材质（枪管/机匣/弹匣/枪托…）
+│   ├── Bullet/Fire/                            # BurnDecal.mat（贴花）、Fire.mat（火花）与效果贴图
+│   ├── Lantern/                                # 纸灯笼的 baseColor / emissive / normal 贴图与材质
+│   ├── MuzzleFlash/                            # 枪口火光贴图与材质
+│   ├── Scene/                                  # 场景材质：Room、Cyber、Plane、Billboard、Light、LightMat
+│   ├── MaterPic/                               # 11 个部件贴图目录
+│   └── 1.mat / CyberEnvironment.mat / Rendering.mat   # 根目录遗留材质
+├── Mode                                        # 模型与特效预制体
+│   ├── 01_1.fbx ~ 04_1.fbx                     # 四套霓虹小人角色模型
+│   ├── ak.fbx / ak_L.obj                       # 手持武器
+│   ├── Room.fbx / Billboard.fbx / Lantern.fbx / Light.fbx    # 房间、广告牌、灯笼、灯
+│   └── BulletEffect/                           # Fire.prefab（命中火花）、FireDecal.prefab（贴花）、MuzzleEffect.prefab（枪口）
+├── PreObject
+│   ├── Effects/ShellHole.shadergraph           # 早期 ShaderGraph 弹孔，已被贴花方案取代
+│   └── Mode/Enemy.prefab                       # 备用敌人预制体
+├── Picture                                     # 场景截图与开火流程说明图，2 张
+├── Scenes
+│   ├── Main.unity                              # 主场景：赛博朋克室内街景 + 玩家 + AK
+│   ├── Load.unity                              # 只有 Canvas / Button / Text 的加载场景
+│   └── TEST.unity                              # Cube / Plane 的材质与光照测试场景
+└── URP
+    ├── Main.asset                              # 管线资产：HDR 开、MSAA 2x、需深度纹理、RenderScale=1
+    ├── Main_Renderer.asset                     # Forward Renderer，挂 DecalRenderFeature（decalMaterial = BurnDecal.mat）
+    └── Bloom.asset                             # 后处理 Volume Profile（Tonemapping / Bloom / 调色 / 色差 / 暗角 / 颗粒）
+```
 
-文件	职责
-Assets/Code/DecalRenderFeature.cs	Renderer Feature：收集本帧贴花、打包实例数据、发起绘制
-Assets/Code/DecalProjector.cs	贴花投射器：盒体尺寸 + 生命周期，自动注册/反注册
-Assets/MatShader/BurnDecal.shader	两个 Pass：碳化（乘法混合）与余烬（加法混合）
-Assets/MatShader/BurnDecalCommon.hlsl	两 Pass 共用的顶点、Uniform、深度重建与碳化评估逻辑
-绘制路径：Feature 挂在 Main_Renderer 上，renderPassEvent = AfterRenderingOpaques，并通过 ConfigureInput(ScriptableRenderPassInput.Depth) 取得深度图。
+```
+系统设计说明:
 
-一次打包、一次绘制：每帧把最多 MaxDecals = 10 个贴花的 worldToBox / boxToWorld / boxSize / fadeAge 打包进一个 StructuredBuffer（结构体 160 字节，与 HLSL 端逐字段对应），然后以 DrawProcedural 绘制 6 × count 个顶点——每个贴花对应一个投影包围盒矩形。这样 DrawCall 数与贴花数量无关（恒为 1~2 次），片元开销也退化为"各贴花投影面积之和"，而不是"数量 × 全屏"。
+### 一次开火经过哪些环节
 
-逐贴花差异化：顶点阶段用 SV_VertexID 与 boxToWorld 把盒子 8 个角投到裁剪空间算出屏幕包围盒，片元阶段用 worldToBox 做盒体裁剪（boxMask），再从深度纹理重建世界坐标，得到每个贴花独立的朝向、尺寸与衰减。
 
-三级性能降级（阈值均可在 Inspector 配置）：
+鼠标左键
+   ↓  HandleFireInput → Fire()
+射速闸门  Time.time - lastFireTime ≥ FIRE_INTERVAL(0.2s)
+   ↓  不满足则直接返回 false，不产生任何特效
+准星射线  playerCamera.ViewportPointToRay(0.5, 0.5)
+   ↓  Physics.RaycastAll(ray, FIRE_RANGE = 200m, FIRE_MASK = ~0)
+按距离排序 → IsValidHit 逐条过滤 → 取最近的有效命中
+   ↓
+命中分支  DecalDiag.LogHit → Player.NotifyShowHint → 对象池取命中特效 → BulletBase.PlayAt
+          └→ SpawnDecal：池取 FireDecal → 记下 sourcePrefab → DecalRenderFeature.Register（队列满则驱逐最旧）
+   ↓  命中与未命中都要走
+枪口分支  对象池取 MuzzleEffect，父级设为 muzzle → MuzzleEffect.Fire() → 0.1s 后 Finished → 归还池
 
-降级	触发条件	做法
-① 旧贴花淘汰	队列长度超过 hardCap	跳过队首最旧的若干个，只画最新的
-② 噪声降档	数量 > 4 用 1 层 FBM，数量 > 2 用 2 层，否则 4 层	CPU 每帧下发 _DecalFbmOct，直接省 ALU
-③ 余烬 Pass 跳过	数量 > emberDegradeAbove（默认 2）	不提交余烬 Pass，省掉一次全屏绘制
-踩坑记录：RenderScale 下的屏幕 UV _ScreenParams 是最终屏幕尺寸，而相机 RT 与 _CameraDepthTexture 的尺寸是"屏幕尺寸 × RenderScale"。若用 _ScreenParams 归一化屏幕 UV，在 RenderScale < 1 时 UV 只覆盖到 0..renderScale，采样到的深度整体偏移，贴花随之错位。这里统一改用 _ScaledScreenParams，与 URP 官方 ShaderPassDecal.hlsl 用 _ScreenSize.zw 的写法等价，RenderScale = 1 时二者相同，向下兼容。另外不能改用 GetNormalizedScreenSpaceUV()——它会额外翻转 Y，而 ComputeWorldSpacePosition 内部已处理过翻转，再翻一次画面会上下颠倒。
 
-6.2 射击与命中反馈链路
-鼠标左键 → PlayerControl.HandleFireInput（射速闸门 0.2s）
-        → TryGetAimHit：Physics.RaycastAll + 有效性过滤
-        → 枪口火花：GameObjectPool.Get(muzzleEffectPrefab, 枪口位姿)
-        → 命中特效：GameObjectPool.Get(bulletEffectPrefab, 命中点, 朝外法线)
-        → BulletBase.PlayAt：摆位 → 播粒子 → SpawnDecal
-        → DecalProjector.ResetDecal：注册进贴花队列，到期自行归还对象池
-6.3 对象池
-GameObjectPool 基于 UnityEngine.Pool.ObjectPool<GameObject>，按 prefab 的 InstanceID 分池，默认容量 8、上限 32。 归还时统一 SetActive(false) 并从父级脱钩（枪口特效作为父级时尤其关键），避免层级残留。
+射速靠"最后开火时间 + 固定间隔"实现，而不是协程或计时器：`lastFireTime` 初值为 `float.NegativeInfinity`，第一次点击必然通过。间隔 0.2s 意味着单发上限 5 发/秒，这个值写在常量里改起来直观，也不会随帧率抖动。
 
-6.4 赛博朋克画面
-Shader 层：Cyber（建筑霓虹描边）、CyberWindow（窗格）、CyberNightSky、Plane（霓虹网格地面）、DecoEmissive、Lantern / LanternCutout、Fire、Sharp（枪械自定义 PBR：法线贴图、金属/粗糙度分离贴图、IBL 开关、逐像素随机的自发光强度与世界坐标哈希驱动的闪烁）等。
-后处理层：CyberpunkGrade 一键写入 Volume Profile——ACES Tonemapping、Bloom（threshold 0.85 / intensity 1.2 / scatter 0.78 / tint 纯白 / 高质量滤波）、Color Adjustments（对比度 +10、轻提曝光）、色差、暗角、颗粒，并统一拉满 Volume Weight。
-6.5 编辑器工具链
-工具	菜单	作用
-NeonBakeLights	Tools → 赛博朋克光照	扫描场景内自发光材质，按亮度与尺寸自动生成 Baked 点光，补足自发光不会照亮环境的短板；含前置检查与一键删除
-CyberpunkGrade	Tools → 赛博朋克调色	通过 Unity API 写入 Volume Profile（避免手改 .asset 的 script GUID 引用错误），可重复执行与还原
-BurnDecalTextureGenerator	Assets → 生成烧灼贴图	程序化生成贴花需要的烧灼遮罩贴图
-FixBloomParams	—	批量修正 Bloom 参数
-七、目录结构
-Assets/
-├─ Code/                 # 运行时逻辑（14 个 C# 脚本，约 1.5k 行）
-│  ├─ PlayerControl.cs   # 第一人称移动、视角、开火
-│  ├─ Player.cs          # 玩家中间层单例，解耦控制与 UI
-│  ├─ BulletBase.cs      # 命中特效与贴花生成
-│  ├─ FireBullet.cs      # 子弹表现
-│  ├─ MuzzleEffect.cs    # 枪口火花
-│  ├─ DecalRenderFeature.cs / DecalProjector.cs / DecalManager.cs / DecalDiag.cs
-│  ├─ GameObjectPool.cs  # prefab 分池对象池
-│  └─ EmissionFlickerControl.cs / PlayerQuestUI.cs / UIFun.cs / Test.cs
-├─ Editor/               # 编辑器工具（4 个）
-├─ MatShader/            # 16 个自定义 Shader + 1 个共享 HLSL 库（约 3.2k 行）
-├─ URP/                  # URP Asset、Renderer、Volume Profile
-├─ Scenes/               # Main / Load / TEST 场景
-├─ Material/  Mode/  PreObject/  Picture/  # 材质、模型、特效预制体、贴图
-八、已知限制与后续计划
-贴花上限为单帧 10 个（MaxDecals），超出后按数量降级；未做分帧预算调度。
-命中贴花目前只有烧灼一种表现，未区分材质（金属/水泥/玻璃）。
-未接入单元测试与 Assembly Definition，Code 目录仍为默认程序集。
-后续计划：贴花材质分型、更精细的 GPU 剔除、性能数据（Frame Debugger / Profile Analyzer）整理成文。
+### 命中判定为什么用 RaycastAll
+
+只取首个命中（`Physics.Raycast`）在这个场景里会误判：`Fire.prefab` 自身带一个 Plane + MeshCollider 作为火花载体，开火后它停在命中点不动，再朝同一位置射击时，射线最先打到的就是这个面片，而不是墙面。结果是特效与贴花原地无限堆叠，并且 `hit.normal` 来自面片背面，可能拿到零向量。
+
+所以链路改成"全量取回 + 逐条判有效 + 按距离取最近"，过滤分三类：
+
+| 过滤条件 | 排除的东西 | 不排除会怎样 |
+| --- | --- | --- |
+| `collider` 为空 / 未启用 / `isTrigger` | 触发区、已关闭的碰撞体 | 打到不可见的判定盒，贴花悬空 |
+| `collider.transform.root == transform.root` | 玩家自身 | 射线从头部出发时打到自己，贴花贴脸 |
+| 沿父级链找到 `BulletBase` / `DecalProjector` / `ParticleSystem` | 火花、贴花、粒子自身 | 特效堆叠 + 法线异常 |
+
+准星红点复用同一个 `TryGetAimHit`：命中时把红点放在 `hit.point + hit.normal * TARGET_NORMAL_OFFSET(0.02m)`，并 `LookRotation(-normal)` 贴住表面；未命中时把红点放到射线上 200m 处。0.02m 的抬升是为了避免红点陷进墙面被 Z-fighting 吃掉。
+
+### 贴花：数据与绘制彻底分开
+
+贴花没有用 URP 自带的 Decal Projector，因为需要"每个贴花独立计时淡出 + 数量硬上限 + 一次 draw call 画完"。职责被拆成三层：
+
+| 脚本 | 职责 | 关键数值 |
+| --- | --- | --- |
+| `DecalProjector` | 纯数据：盒尺寸、坐标矩阵、生命周期，自行 Tick | `lifeTime = 8s`，`fadeTime = 2s` |
+| `DecalManager` | 每个 `Update` 遍历活跃贴花，到期注销并按其 `sourcePrefab` 归还池 | 无固定容量 |
+| `DecalRenderFeature` | 每帧把活跃贴花打包成结构化缓冲，一次 `DrawProcedural` 绘制 | `MaxDecals = 10`，每个实例 160 字节 |
+
+160 字节的构成：`worldToBox`（Matrix4x4，64）+ `boxToWorld`（Matrix4x4，64）+ `boxSize`（Vector4，16）+ `fadeAge`（x = 淡化系数，y = 归一化年龄，16）。同时上传逆矩阵是有代价的，但顶点阶段要把盒体 8 个角投到裁剪空间算屏幕包围盒，用 `worldToBox` 在着色器里求逆既贵又不可靠，所以两个矩阵都放进去。
+
+绘制用 `DrawProcedural` 而不是实例化 Mesh：每个贴花只占 6 个顶点（屏幕矩形两个三角形），顶点索引由 `vertexID` 推出来，`MaxDecals = 10` 时总共 60 个顶点，CPU 侧只做一次 buffer 上传与一次提交。
+
+RenderFeature 只在 `CameraType.Game` 与 `CameraType.SceneView` 执行，跳过反射、预览、以及主相机之外的中间相机，避免同一帧对同一批贴花重复全屏绘制。
+
+### 贴花着色：屏幕包围盒 → 深度重建 → 盒体裁剪
+
+每个贴花的片元计算是一条固定管线：
+
+1. 顶点阶段把盒体 8 个角变换到裁剪空间，取 NDC 的 min/max 得到屏幕矩形；边缘再外扩 4 像素（`4.0 / _ScaledScreenParams.xy`），防止恰好落在边界的像素被光栅化裁掉。
+2. 片元阶段用屏幕 UV 采样 `_CameraDepthTexture`，`LinearEyeDepth` 还原眼空间深度，再经逆投影 + 逆视图矩阵得到世界坐标。
+3. 世界坐标乘 `worldToBox` 进入贴花盒局部空间，`boxMask` 判断是否落在盒内；盒外直接 `clip`。
+4. 盒内按局部坐标算碳化强度与到边缘的距离，分别喂给两个 Pass。
+
+无深度的情况必须回退：命中面不写深度（纯碰撞体、透明材质、自发光装饰）时，该像素深度恒为远平面，重建点会落到几百米外，被盒体裁剪掉，整片贴花消失。回退做法是用屏幕 UV 从相机反投影出一条视线，与盒中心平面（局部 z = 0）求交。这里不能用"盒体进入点"——进入点落在盒边界上，`boxMask` 在那里恰好为 0，整片贴花会被裁掉；中心平面交点处 z 恒为 0，`boxMask.z` 稳定为 1。视线几乎平行于平面或平面落在相机后方时返回盒外坐标，交给 `boxMask` 处理。
+
+两个 Pass 都用加法混合（`Blend One One`）与 `ZTest Always`：
+
+| Pass | 内容 | 选择理由 |
+| --- | --- | --- |
+| `CHAR` | 碳化染色 | 早期用 `Blend DstColor Zero`（`dst *= lerp(white, dark, alpha)`），HDR 高亮表面乘 0.02 约等于不可见；改成加法后 HDR 颜色能直接穿透 Bloom |
+| `EMBER` | 余烬边缘发光 | 叠加在已烧黑的痕迹边缘，靠 `_EmberWidth` 控制宽度 |
+
+`ZTest Always` 是必须的：全屏三角的 z = 0，在 Reversed-Z 下 `LEqual` 会把远处场景整体裁掉。
+
+### 贴花变多时先省哪一块 GPU
+
+`DecalRenderFeature` 每帧根据活跃数量下发三档降级，阈值在 Inspector 可调，默认值如下：
+
+| 活跃贴花数 | 余烬 Pass | fbm 噪声倍频 | 说明 |
+| --- | --- | --- | --- |
+| ≤ 2 | 绘制 | 4 | 全质量，`emberDegradeAbove = 2` |
+| 3 ~ 4 | 跳过 | 2 | 省掉一个全屏 Pass 的一半开销，`noiseDegradeAbove = 2` |
+| ≥ 5 | 跳过 | 1 | `noiseMinAbove = 4`，只保留最低频噪声 |
+
+另有一个 `hardCap`（默认 0 表示不启用）：大于 0 且贴花数超出时，绘制阶段直接跳过队首若干个最旧的，只画最新的。它影响的是"画不画"，不影响"注册不注册"——注册阶段的硬上限仍然是 `MaxDecals = 10`，队列满时先 `Dequeue` 最旧的并归还其对象池，再把新贴花 `Enqueue`，避免产生孤儿实例。
+
+### 对象池：按来源预制体分池，归还守三条纪律
+
+`GameObjectPool` 是静态表，key 用预制体的 `GetInstanceID()`，所以"同一个预制体的实例"天然归到同一个池。`ObjectPool<GameObject>` 的配置是 `defaultCapacity = 8`、`maxSize = 32`，关掉 `collectionCheck`（重复 Release 检测）换性能。
+
+归还动作只有三条，但顺序不能换：
+
+```csharp
+actionOnRelease: go =>
+{
+    go.SetActive(false);
+    go.transform.SetParent(null, worldPositionStays: false);   // 从父级脱钩
+}
+
+
+取用的顺序正好相反：先 `SetParent(parent, worldPositionStays: true)`，再 `SetPositionAndRotation`，最后 `if (!go.activeSelf) go.SetActive(true)`。池里的实例可能是失活状态，不强制激活就取出来用，表现是"特效生成了但看不见"。
+
+`FireBullet` 另有一层数量约束：活跃实例超过 `MaxActive = 8` 时，先 `Dequeue` 最旧的并归还它自己的池。这一层解决的是"每秒 5 发、每发都有火花"时特效在场景里堆积的问题，与 `MaxDecals = 10` 的贴花上限是两套独立阈值。
+
+`MuzzleEffect` 挂在枪口下作为子物体，它靠 `Finished` 事件通知调用方归还，并且在 `invoke` 之后立刻把 `Finished = null`——否则同一个 GameObject 被池复用时，旧订阅会累积，一次闪光触发多次回调。
+
+### 玩家与 UI 的中间层
+
+`PlayerControl` 只负责输入与物理，所有要被别处读取的状态（`RotationX`、`RotationY`、`Position`、`IsGrounded`）都写进 `Player` 单例，UI 侧只认 `PlayerQuestUI` 接口（`ShowHint` / `HideHint` / `UpdateHealth`），由 `UIFun` 实现。这样换 UI 实现不需要动玩家脚本，玩家脚本也不必知道 Canvas 存不存在。
+
+相机位置在 `LateUpdate` 里算，因为要等玩家旋转先落地：位置 = `Player.Position + (0, 0.7 - 俯仰角 × 0.015, -0.4)`，`CAMERA_PITCH_HEIGHT_PER_DEGREE = 0.15 / 10`，即每向上 10° 头部抬高 0.1m，给俯仰一点位移感。身体旋转角乘以 `BODY_ROTATION_FACTOR`（当前 1.0，即完全同步），Y 分量用 `Mathf.Repeat` 取余，防止系数不为 1 时角度无限增长。
+
+### 编辑器工具链
+
+| 菜单路径 | 作用 |
+| --- | --- |
+| `Tools/赛博朋克调色/应用第一档(后处理全套)` | 给场景 Global Volume 挂 Tonemapping(ACES)、Bloom（threshold 0.85、intensity 1.2、scatter 0.78、tint 改白）、阴影染蓝/高光染青、色差 + 暗角 + 颗粒，并把 Volume weight 拉满 1.0 |
+| `Tools/赛博朋克调色/还原(关闭第一档)` | 关闭上述组件，保留 Profile 结构 |
+| `Tools/赛博朋克光照/① 检查烘焙前置条件` | 检查场景是否具备烘焙前提，列出已生成的点光 |
+| `Tools/赛博朋克光照/② 为霓虹生成烘焙点光` | 遍历自发光物体，按亮度与尺寸生成 Baked 点光，父物体名 `NeonBakeLights` |
+| `Tools/赛博朋克光照/③ 删除生成的点光` | 删除上一次生成的点光，便于重新生成 |
+| `Tools/Bloom 性能参数修复(MaxIterations=3)` | 扫描 Profile，把 Bloom 的 `maxIterations` 覆盖为 3、`clamp` 覆盖为 20 |
+
+`NeonBakeLights` 的换算规则：光强 = 自发光亮度 × 1.6，夹在 0.8 ~ 18；照射半径 = 物体最大边长 × 4.5，夹在 2 ~ 16；最大边长超过 8m 的物体（地面、大楼）不当作霓虹处理；颜色先归一化去掉 HDR 超高亮度，只保留色相，亮度交给 intensity。
+```
+```
+问题与解决方案:
+
+
+
+
+
+```
+```
+## 不足
+
+- 贴花上限固定 `MaxDecals = 10`，队列满时直接驱逐最旧实例，没有按距离或屏幕占比取舍；连射时最早的火花痕迹会提前消失。
+- 贴花按全屏包围盒逐像素绘制，命中点靠近相机时开销与命中面在屏幕上的实际占比无关，缺少屏幕占比裁剪或遮挡剔除。
+- 准星红点在 `LateUpdate` 里每帧做一次 `RaycastAll` 并全量排序，属于每帧固定开销，未做降频或对静态物体分帧检测。
+- 玩法规格只到"命中点 + 视觉反馈"：没有伤害、弹药、后坐力、音效与换弹；血量链路是空转的——`UIFun.UpdateHealth` 由 `Player.NotifyUpdateHealth` 转发，而 `NotifyUpdateHealth` 没有任何调用方。
+- `Fire.prefab` 自带 Plane + MeshCollider 作为火花载体，只能靠 `IsEffectObject` 沿父级链过滤兜住；新增特效预制体若漏挂 `BulletBase` / `DecalProjector`，射线仍会打到特效面片。
+- `BurnDecal.mat` 的 `_BurnTex` 目前为空，贴花走程序化碳化；`BurnDecalTextureGenerator` 没有挂 `MenuItem`，且输出路径 `Assets/Material/Fire` 与材质实际所在的 `Assets/Material/Bullet/Fire` 不一致，直接调用会在新目录下找不到材质并转入手动拖入分支。
+- `DecalDepthProxy.shader`、`PreObject/Effects/ShellHole.shadergraph` 是更早两版贴花方案的残留，工程里没有任何引用；`Test.cs` 是 URP RendererFeature 模板，未挂到 Renderer。
+- `Player` 与 `PlayerControl` 各定义了一套移动常量且数值不同（80° / 5 m·s⁻¹ / 头部偏移 (0,1.7,0) 对 30° / 20 m·s⁻¹ / (0,0.7,-0.4)），实际生效的是 `PlayerControl` 的一份，`Player` 上的那套没有使用方。
+- 主场景 241 个 Light 中 117 个是 Baked，改动场景结构后必须重新 `Generate Lighting`，否则霓虹补光与原结构错位。
+- 预制体内的 `m_Script` 仍写 32 位十六进制 guid，而脚本 `.meta` 已是团结引擎的 base64 guid 形式，文本层面无法直接交叉核对；迁移到其他引擎版本或重新导入资源时需逐个验证脚本引用是否还在。
+```
