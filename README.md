@@ -95,20 +95,6 @@ Assets
 
 射速靠"最后开火时间 + 固定间隔"实现，而不是协程或计时器：`lastFireTime` 初值为 `float.NegativeInfinity`，第一次点击必然通过。间隔 0.2s 意味着单发上限 5 发/秒，这个值写在常量里改起来直观，也不会随帧率抖动。
 
-### 命中判定为什么用 RaycastAll
-
-只取首个命中（`Physics.Raycast`）在这个场景里会误判：`Fire.prefab` 自身带一个 Plane + MeshCollider 作为火花载体，开火后它停在命中点不动，再朝同一位置射击时，射线最先打到的就是这个面片，而不是墙面。结果是特效与贴花原地无限堆叠，并且 `hit.normal` 来自面片背面，可能拿到零向量。
-
-所以链路改成"全量取回 + 逐条判有效 + 按距离取最近"，过滤分三类：
-
-| 过滤条件 | 排除的东西 | 不排除会怎样 |
-| --- | --- | --- |
-| `collider` 为空 / 未启用 / `isTrigger` | 触发区、已关闭的碰撞体 | 打到不可见的判定盒，贴花悬空 |
-| `collider.transform.root == transform.root` | 玩家自身 | 射线从头部出发时打到自己，贴花贴脸 |
-| 沿父级链找到 `BulletBase` / `DecalProjector` / `ParticleSystem` | 火花、贴花、粒子自身 | 特效堆叠 + 法线异常 |
-
-准星红点复用同一个 `TryGetAimHit`：命中时把红点放在 `hit.point + hit.normal * TARGET_NORMAL_OFFSET(0.02m)`，并 `LookRotation(-normal)` 贴住表面；未命中时把红点放到射线上 200m 处。0.02m 的抬升是为了避免红点陷进墙面被 Z-fighting 吃掉。
-
 ### 贴花：数据与绘制彻底分开
 
 贴花没有用 URP 自带的 Decal Projector，因为需要"每个贴花独立计时淡出 + 数量硬上限 + 一次 draw call 画完"。职责被拆成三层：
@@ -118,8 +104,6 @@ Assets
 | `DecalProjector` | 纯数据：盒尺寸、坐标矩阵、生命周期，自行 Tick | `lifeTime = 8s`，`fadeTime = 2s` |
 | `DecalManager` | 每个 `Update` 遍历活跃贴花，到期注销并按其 `sourcePrefab` 归还池 | 无固定容量 |
 | `DecalRenderFeature` | 每帧把活跃贴花打包成结构化缓冲，一次 `DrawProcedural` 绘制 | `MaxDecals = 10`，每个实例 160 字节 |
-
-160 字节的构成：`worldToBox`（Matrix4x4，64）+ `boxToWorld`（Matrix4x4，64）+ `boxSize`（Vector4，16）+ `fadeAge`（x = 淡化系数，y = 归一化年龄，16）。同时上传逆矩阵是有代价的，但顶点阶段要把盒体 8 个角投到裁剪空间算屏幕包围盒，用 `worldToBox` 在着色器里求逆既贵又不可靠，所以两个矩阵都放进去。
 
 绘制用 `DrawProcedural` 而不是实例化 Mesh：每个贴花只占 6 个顶点（屏幕矩形两个三角形），顶点索引由 `vertexID` 推出来，`MaxDecals = 10` 时总共 60 个顶点，CPU 侧只做一次 buffer 上传与一次提交。
 
@@ -156,26 +140,6 @@ RenderFeature 只在 `CameraType.Game` 与 `CameraType.SceneView` 执行，跳�
 | ≥ 5 | 跳过 | 1 | `noiseMinAbove = 4`，只保留最低频噪声 |
 
 另有一个 `hardCap`（默认 0 表示不启用）：大于 0 且贴花数超出时，绘制阶段直接跳过队首若干个最旧的，只画最新的。它影响的是"画不画"，不影响"注册不注册"——注册阶段的硬上限仍然是 `MaxDecals = 10`，队列满时先 `Dequeue` 最旧的并归还其对象池，再把新贴花 `Enqueue`，避免产生孤儿实例。
-
-### 对象池：按来源预制体分池，归还守三条纪律
-
-`GameObjectPool` 是静态表，key 用预制体的 `GetInstanceID()`，所以"同一个预制体的实例"天然归到同一个池。`ObjectPool<GameObject>` 的配置是 `defaultCapacity = 8`、`maxSize = 32`，关掉 `collectionCheck`（重复 Release 检测）换性能。
-
-归还动作只有三条，但顺序不能换：
-
-```csharp
-actionOnRelease: go =>
-{
-    go.SetActive(false);
-    go.transform.SetParent(null, worldPositionStays: false);   // 从父级脱钩
-}
-
-
-取用的顺序正好相反：先 `SetParent(parent, worldPositionStays: true)`，再 `SetPositionAndRotation`，最后 `if (!go.activeSelf) go.SetActive(true)`。池里的实例可能是失活状态，不强制激活就取出来用，表现是"特效生成了但看不见"。
-
-`FireBullet` 另有一层数量约束：活跃实例超过 `MaxActive = 8` 时，先 `Dequeue` 最旧的并归还它自己的池。这一层解决的是"每秒 5 发、每发都有火花"时特效在场景里堆积的问题，与 `MaxDecals = 10` 的贴花上限是两套独立阈值。
-
-`MuzzleEffect` 挂在枪口下作为子物体，它靠 `Finished` 事件通知调用方归还，并且在 `invoke` 之后立刻把 `Finished = null`——否则同一个 GameObject 被池复用时，旧订阅会累积，一次闪光触发多次回调。
 
 ### 玩家与 UI 的中间层
 
