@@ -129,7 +129,7 @@ RenderFeature 只在 `CameraType.Game` 与 `CameraType.SceneView` 执行，跳�
 
 `ZTest Always` 是必须的：全屏三角的 z = 0，在 Reversed-Z 下 `LEqual` 会把远处场景整体裁掉。
 
-### 贴花变多时先省哪一块 GPU
+### 贴花变多时性能节省
 
 `DecalRenderFeature` 每帧根据活跃数量下发三档降级，阈值在 Inspector 可调，默认值如下：
 
@@ -139,30 +139,30 @@ RenderFeature 只在 `CameraType.Game` 与 `CameraType.SceneView` 执行，跳�
 | 3 ~ 4 | 跳过 | 2 | 省掉一个全屏 Pass 的一半开销，`noiseDegradeAbove = 2` |
 | ≥ 5 | 跳过 | 1 | `noiseMinAbove = 4`，只保留最低频噪声 |
 
-另有一个 `hardCap`（默认 0 表示不启用）：大于 0 且贴花数超出时，绘制阶段直接跳过队首若干个最旧的，只画最新的。它影响的是"画不画"，不影响"注册不注册"——注册阶段的硬上限仍然是 `MaxDecals = 10`，队列满时先 `Dequeue` 最旧的并归还其对象池，再把新贴花 `Enqueue`，避免产生孤儿实例。
+另有一个 `hardCap`：大于 0 且贴花数超出时，绘制阶段直接跳过队首若干个最旧的，只画最新的。它影响的是"画不画"，不影响"注册不注册"——注册阶段的硬上限仍然是 `MaxDecals = 10`，队列满时先 `Dequeue` 最旧的并归还其对象池，再把新贴花 `Enqueue`，避免产生孤儿实例。
 
 ### 玩家与 UI 的中间层
 
-`PlayerControl` 只负责输入与物理，所有要被别处读取的状态（`RotationX`、`RotationY`、`Position`、`IsGrounded`）都写进 `Player` 单例，UI 侧只认 `PlayerQuestUI` 接口（`ShowHint` / `HideHint` / `UpdateHealth`），由 `UIFun` 实现。这样换 UI 实现不需要动玩家脚本，玩家脚本也不必知道 Canvas 存不存在。
+`PlayerControl` 只负责输入与物理，所有要被别处读取的状态都写进 `Player` 单例，UI 侧只认 `PlayerQuestUI` 接口，由 `UIFun` 实现。这样换 UI 实现不需要动玩家脚本，玩家脚本也不必知道 Canvas 存不存在。
 
-相机位置在 `LateUpdate` 里算，因为要等玩家旋转先落地：位置 = `Player.Position + (0, 0.7 - 俯仰角 × 0.015, -0.4)`，`CAMERA_PITCH_HEIGHT_PER_DEGREE = 0.15 / 10`，即每向上 10° 头部抬高 0.1m，给俯仰一点位移感。身体旋转角乘以 `BODY_ROTATION_FACTOR`（当前 1.0，即完全同步），Y 分量用 `Mathf.Repeat` 取余，防止系数不为 1 时角度无限增长。
+相机位置在 `LateUpdate` 里算，因为要等玩家旋转先落地：位置 = `Player.Position + (0, 0.7 - 俯仰角 × 0.015, -0.4)`，`CAMERA_PITCH_HEIGHT_PER_DEGREE = 0.15 / 10`，即每向上 10° 头部抬高 0.1m，给俯仰一点位移感。身体旋转角乘以 `BODY_ROTATION_FACTOR`，Y 分量用 `Mathf.Repeat` 取余，防止系数不为 1 时角度无限增长。
 
 ### 编辑器工具链
 
 | 菜单路径 | 作用 |
 | --- | --- |
-| `Tools/赛博朋克调色/应用第一档(后处理全套)` | 给场景 Global Volume 挂 Tonemapping(ACES)、Bloom（threshold 0.85、intensity 1.2、scatter 0.78、tint 改白）、阴影染蓝/高光染青、色差 + 暗角 + 颗粒，并把 Volume weight 拉满 1.0 |
-| `Tools/赛博朋克调色/还原(关闭第一档)` | 关闭上述组件，保留 Profile 结构 |
-| `Tools/赛博朋克光照/① 检查烘焙前置条件` | 检查场景是否具备烘焙前提，列出已生成的点光 |
+| `Tools/赛博朋克调色/应用第一档| 将各种后处理的参数调整为效果最好的效果 |
+| `Tools/赛博朋克调色/还原` | 关闭上述效果 |
+| `Tools/赛博朋克光照/① 检查烘焙前置条件` | 检查场景是否具备烘焙前提，获取已生成的点光 |
 | `Tools/赛博朋克光照/② 为霓虹生成烘焙点光` | 遍历自发光物体，按亮度与尺寸生成 Baked 点光，父物体名 `NeonBakeLights` |
 | `Tools/赛博朋克光照/③ 删除生成的点光` | 删除上一次生成的点光，便于重新生成 |
-| `Tools/Bloom 性能参数修复(MaxIterations=3)` | 扫描 Profile，把 Bloom 的 `maxIterations` 覆盖为 3、`clamp` 覆盖为 20 |
+| `Tools/Bloom 性能参数修复` | 扫描 Profile，把 Bloom 的 `maxIterations` 覆盖为 3、`clamp` 覆盖为 20 |
 
-`NeonBakeLights` 的换算规则：光强 = 自发光亮度 × 1.6，夹在 0.8 ~ 18；照射半径 = 物体最大边长 × 4.5，夹在 2 ~ 16；最大边长超过 8m 的物体（地面、大楼）不当作霓虹处理；颜色先归一化去掉 HDR 超高亮度，只保留色相，亮度交给 intensity。
 ```
 ```
 问题与解决方案:
-
+    ###　问题1:
+        
 
 
 
@@ -175,10 +175,5 @@ RenderFeature 只在 `CameraType.Game` 与 `CameraType.SceneView` 执行，跳�
 - 贴花按全屏包围盒逐像素绘制，命中点靠近相机时开销与命中面在屏幕上的实际占比无关，缺少屏幕占比裁剪或遮挡剔除。
 - 准星红点在 `LateUpdate` 里每帧做一次 `RaycastAll` 并全量排序，属于每帧固定开销，未做降频或对静态物体分帧检测。
 - 玩法规格只到"命中点 + 视觉反馈"：没有伤害、弹药、后坐力、音效与换弹；血量链路是空转的——`UIFun.UpdateHealth` 由 `Player.NotifyUpdateHealth` 转发，而 `NotifyUpdateHealth` 没有任何调用方。
-- `Fire.prefab` 自带 Plane + MeshCollider 作为火花载体，只能靠 `IsEffectObject` 沿父级链过滤兜住；新增特效预制体若漏挂 `BulletBase` / `DecalProjector`，射线仍会打到特效面片。
-- `BurnDecal.mat` 的 `_BurnTex` 目前为空，贴花走程序化碳化；`BurnDecalTextureGenerator` 没有挂 `MenuItem`，且输出路径 `Assets/Material/Fire` 与材质实际所在的 `Assets/Material/Bullet/Fire` 不一致，直接调用会在新目录下找不到材质并转入手动拖入分支。
-- `DecalDepthProxy.shader`、`PreObject/Effects/ShellHole.shadergraph` 是更早两版贴花方案的残留，工程里没有任何引用；`Test.cs` 是 URP RendererFeature 模板，未挂到 Renderer。
-- `Player` 与 `PlayerControl` 各定义了一套移动常量且数值不同（80° / 5 m·s⁻¹ / 头部偏移 (0,1.7,0) 对 30° / 20 m·s⁻¹ / (0,0.7,-0.4)），实际生效的是 `PlayerControl` 的一份，`Player` 上的那套没有使用方。
-- 主场景 241 个 Light 中 117 个是 Baked，改动场景结构后必须重新 `Generate Lighting`，否则霓虹补光与原结构错位。
-- 预制体内的 `m_Script` 仍写 32 位十六进制 guid，而脚本 `.meta` 已是团结引擎的 base64 guid 形式，文本层面无法直接交叉核对；迁移到其他引擎版本或重新导入资源时需逐个验证脚本引用是否还在。
+- 对于模型,除了AK模型为全手动建,其余场景模型均是通过AI,资源寻得,在高模进行处理时,出现一些偏差,导致美术效果下降
 ```
