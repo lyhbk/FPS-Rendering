@@ -2,7 +2,7 @@
 
 项目简介：基于团结引擎（Tuanjie 1.10.3，对应 Unity 2022.3.62t15）与 URP 14.2.0-t1 的第一人称射击 Demo，场景是一条室内赛博朋克窄街。玩家持 AK 移动、跳跃、开火，命中面会留下带碳化与余烬两段效果的枪击贴花。
 
-代码集中在 `Assets/Code`（运行时 14 个脚本）与 `Assets/Editor`（4 个编辑器脚本），渲染相关资产在 `Assets/MatShader`（16 个 Shader + 1 个公共 HLSL）与 `Assets/URP`（管线、Renderer、Volume Profile）。
+代码集中在 `Assets/Code`与 `Assets/Editor`，渲染相关资产在 `Assets/MatShader`与 `Assets/URP`。
 
 ## 一、项目概览
 
@@ -12,7 +12,6 @@
 | 语言 | C#；运行时脚本 14 个、编辑器脚本 4 个，共 18 个 .cs |
 | 核心依赖 | URP 14.2.0-t1（Forward + Volume 后处理）、uGUI 1.0.0、TextMeshPro 3.0.9、Timeline 1.8.9-t1；未引入第三方包 |
 | 场景 | `Assets/Scenes/Main.unity` 为主场景；`Load.unity` 只有 Canvas/Button/Text 的加载页；`TEST.unity` 为材质与光照测试场景 |
-| 数据或资源 | 37 个 .mat、87 张贴图、16 个 Shader + 1 个 HLSL、9 个 .fbx 与 1 个 .obj 模型、4 个预制体；主场景含 241 个 Light（119 点光 / 120 聚光 / 2 平行光，其中 117 个为 Baked） |
 | 交付形态 | 本地工程，用团结引擎打开 `Assets/Scenes/Main.unity` 直接 Play；没有发布包与可执行文件 |
 
 ```
