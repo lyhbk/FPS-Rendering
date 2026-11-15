@@ -4,7 +4,7 @@
 
 ### C#逻辑:`Assets/Code`
 ### 工具脚本:`Assets/Editor`
-### 渲染资产: `Assets/MatShader`。
+### 渲染资产: `Assets/MatShader`
 
 ## 一、项目概览
 
