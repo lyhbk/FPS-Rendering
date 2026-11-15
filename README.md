@@ -2,7 +2,9 @@
 
 项目简介：基于团结引擎（Tuanjie 1.10.3，对应 Unity 2022.3.62t15）与 URP 14.2.0-t1 的第一人称射击 Demo，场景是一条室内赛博朋克窄街。玩家持 AK 移动、跳跃、开火，命中面会留下带碳化与余烬两段效果的枪击贴花。
 
-代码集中在 `Assets/Code`与 `Assets/Editor`，渲染相关资产在 `Assets/MatShader`。
+### C#逻辑:`Assets/Code`
+### 工具脚本:`Assets/Editor`
+### 渲染资产: `Assets/MatShader`。
 
 ## 一、项目概览
 
